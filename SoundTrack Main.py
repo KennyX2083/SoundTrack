@@ -15,11 +15,40 @@ import os
 import requests
 from io import BytesIO
 from PIL import Image, ImageTk
+import socket
+
+import openai
+
+def get_free_port():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(('localhost', 0))
+        return s.getsockname()[1]
 
 # Spotify API credentials
-SPOTIPY_CLIENT_ID = '6294425ede084c7cb72a5e16a779f1c9'
-SPOTIPY_CLIENT_SECRET = 'b052b89d7d62499284d2b748e0fd0070'
-SPOTIPY_REDIRECT_URI = 'http://localhost:8888/callback'
+SPOTIPY_CLIENT_ID = 'put-id-here'
+SPOTIPY_CLIENT_SECRET = 'put-secret-here'
+SPOTIPY_REDIRECT_URI = 'http://localhost:3000'
+
+import tkinter as tk
+
+root = tk.Tk()
+
+# Create a Text widget
+text_widget = tk.Text(root, wrap="none")
+text_widget.pack(side="left", fill="both", expand=True)
+
+# Create a Scrollbar widget
+scrollbar = tk.Scrollbar(root, command=text_widget.yview)
+scrollbar.pack(side="right", fill="y")
+
+# Configure the Text widget to use the Scrollbar
+text_widget.config(yscrollcommand=scrollbar.set)
+
+# Insert some text to make it scrollable
+for i in range(50):
+    text_widget.insert("end", f"This is line {i}\n")
+
+root.mainloop()
 
 SCOPE = ('user-read-currently-playing user-modify-playback-state '
          'user-read-playback-state user-top-read user-library-modify '
@@ -40,7 +69,8 @@ class DatabaseManager:
                     artist TEXT,
                     album TEXT,
                     duration_ms INTEGER,
-                    uri TEXT
+                    uri TEXT,
+                    album_art_url TEXT  -- 新增字段
                 )
             ''')
             cursor.execute('''
@@ -61,14 +91,15 @@ class DatabaseManager:
                 cursor = conn.cursor()
                 cursor.execute('''
                     INSERT OR IGNORE INTO songs 
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                 ''', (
                     track['id'],
                     track['name'],
                     ', '.join([a['name'] for a in track['artists']]),
                     track['album']['name'],
                     track['duration_ms'],
-                    track['uri']
+                    track['uri'],
+                    track['album']['images'][0]['url'] if track['album']['images'] else None  # 新增字段
                 ))
                 cursor.execute('''
                     INSERT INTO plays 
@@ -87,7 +118,7 @@ class DatabaseManager:
         with sqlite3.connect(self.db_name) as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT s.name, s.artist, s.album, p.timestamp, p.latitude, p.longitude
+                SELECT s.name, s.artist, s.album, p.timestamp, p.latitude, p.longitude, s.album_art_url
                 FROM plays p
                 JOIN songs s ON p.track_id = s.track_id
                 ORDER BY p.timestamp DESC
@@ -172,7 +203,7 @@ class SpotifyPlayer:
 
         self.prev_button = ttk.Button(control_frame, text="⏮", command=self.previous_track)
         self.prev_button.pack(side=tk.LEFT, padx=2)
-        self.play_button = ttk.Button(control_frame, text="⏯", command=self.play_pause)
+        self.play_button = ttk.Button(control_frame, text="⏸", command=self.play_pause)
         self.play_button.pack(side=tk.LEFT, padx=2)
         self.next_button = ttk.Button(control_frame, text="⏭", command=self.next_track)
         self.next_button.pack(side=tk.LEFT, padx=2)
@@ -268,8 +299,18 @@ class SpotifyPlayer:
                 frame = ttk.Frame(self.liked_scrollable_frame)
                 frame.pack(fill=tk.X, padx=5, pady=2)
                 
-                ttk.Button(frame, text="▶", width=3,
-                         command=lambda uri=t['uri']: self.play_uri(uri)).pack(side=tk.LEFT)
+                ttk.Button(frame, text="▶", width=3, command=lambda uri=t['uri']: self.play_uri(uri)).pack(side=tk.LEFT)
+                
+                if t['album']['images']:
+                    image_url = t['album']['images'][0]['url']
+                    response = requests.get(image_url)
+                    img = Image.open(BytesIO(response.content))
+                    img = img.resize((32, 32), Image.Resampling.LANCZOS)
+                    img_tk = ImageTk.PhotoImage(img)
+                    label = ttk.Label(frame, image=img_tk)
+                    label.image = img_tk  # 保持引用
+                    label.pack(side=tk.LEFT, padx=5)
+                
                 ttk.Label(frame, text=t['name'], width=40).pack(side=tk.LEFT)
                 ttk.Label(frame, text=', '.join(a['name'] for a in t['artists']), width=30).pack(side=tk.LEFT)
                 ttk.Label(frame, text=t['album']['name'], width=30).pack(side=tk.LEFT)
@@ -286,7 +327,7 @@ class SpotifyPlayer:
                 ttk.Label(frame, text=pl['name'], width=40).pack(side=tk.LEFT)
                 ttk.Label(frame, text=pl['owner']['display_name'], width=20).pack(side=tk.LEFT)
                 ttk.Button(frame, text="▶", 
-                         command=lambda uri=pl['uri']: self.play_playlist(uri)).pack(side=tk.RIGHT)
+                        command=lambda uri=pl['uri']: self.play_playlist(uri)).pack(side=tk.RIGHT)
 
             # Albums
             albums = self.sp.current_user_saved_albums(limit=10)['items']
@@ -302,11 +343,22 @@ class SpotifyPlayer:
                 header_frame.pack(fill=tk.X)
                 
                 ttk.Button(header_frame, text="▶", width=3,
-                         command=lambda uri=album['uri']: self.play_uri(uri)).pack(side=tk.LEFT)
+                        command=lambda uri=album['uri']: self.play_uri(uri)).pack(side=tk.LEFT)
+            
+                if album['images']:
+                    image_url = album['images'][0]['url']
+                    response = requests.get(image_url)
+                    img = Image.open(BytesIO(response.content))
+                    img = img.resize((32, 32), Image.Resampling.LANCZOS)
+                    img_tk = ImageTk.PhotoImage(img)
+                    label = ttk.Label(header_frame, image=img_tk)
+                    label.image = img_tk 
+                    label.pack(side=tk.LEFT, padx=5)
+                
                 ttk.Label(header_frame, text=album['name'], width=40).pack(side=tk.LEFT)
                 ttk.Label(header_frame, text=', '.join(a['name'] for a in album['artists']), width=30).pack(side=tk.LEFT)
                 ttk.Button(header_frame, text="▼", width=3,
-                         command=lambda f=album_frame, a=album: self.toggle_album_tracks(f, a)).pack(side=tk.RIGHT)
+                        command=lambda f=album_frame, a=album: self.toggle_album_tracks(f, a)).pack(side=tk.RIGHT)
                 
                 # Hidden track list frame
                 self.track_list_frame = ttk.Frame(album_frame)
@@ -330,7 +382,18 @@ class SpotifyPlayer:
                     track_frame.pack(fill=tk.X, padx=5, pady=2)
                     
                     ttk.Button(track_frame, text="▶", width=3,
-                             command=lambda uri=track['uri']: self.play_uri(uri)).pack(side=tk.LEFT)
+                            command=lambda uri=track['uri']: self.play_uri(uri)).pack(side=tk.LEFT)
+                    
+                    if album['images']:
+                        image_url = album['images'][0]['url']
+                        response = requests.get(image_url)
+                        img = Image.open(BytesIO(response.content))
+                        img = img.resize((32, 32), Image.Resampling.LANCZOS)
+                        img_tk = ImageTk.PhotoImage(img)
+                        label = ttk.Label(track_frame, image=img_tk)
+                        label.image = img_tk
+                        label.pack(side=tk.LEFT, padx=5)
+                    
                     ttk.Label(track_frame, text=track['name'], width=40).pack(side=tk.LEFT)
                     ttk.Label(track_frame, text=', '.join(a['name'] for a in track['artists']), width=30).pack(side=tk.LEFT)
                     ttk.Label(track_frame, text=album['name'], width=30).pack(side=tk.LEFT)
@@ -471,15 +534,8 @@ class SpotifyPlayer:
             self.root.after(self.update_interval, self.update_playback_info)
 
     def log_play_event(self, track):
-        try:
-            g = geocoder.ip('me')
-            if g.ok:
-                raise Exception("Failed to retrieve accurate location data")  # Fake an error
-            else:
-                raise Exception("Geolocation service unavailable")  # Fake another error
-        except Exception as e:
-            print(f"Error logging play: {e}")  # Display an error message
-            location = [40.809250, -73.961250]  # Always log the default coordinates
+        location = geocoder.ip('me').latlng
+        if location:
             self.db.log_play(track, location)
 
 
@@ -539,13 +595,14 @@ class SpotifyPlayer:
             widget.destroy()
         
         history = self.db.get_play_history()
-        tree = ttk.Treeview(self.history_frame, columns=('Song', 'Artist', 'Album', 'Location'), show='headings')
+        tree = ttk.Treeview(self.history_frame, columns=('Song', 'Artist', 'Album', 'Location', 'Album Art'), show='headings')
         tree.heading('#0', text='Date & Time')
         tree.column('#0', width=150)
         tree.heading('Song', text='Song')
         tree.heading('Artist', text='Artist')
         tree.heading('Album', text='Album')
         tree.heading('Location', text='Location')
+        tree.heading('Album Art', text='Album Art')
         
         vsb = ttk.Scrollbar(self.history_frame, orient="vertical", command=tree.yview)
         tree.configure(yscrollcommand=vsb.set)
@@ -559,9 +616,10 @@ class SpotifyPlayer:
                 item[0],
                 item[1],
                 item[2],
-                f"{item[4]:.4f}, {item[5]:.4f}"
+                f"{item[4]:.4f}, {item[5]:.4f}",
+                item[6]  # 专辑照片URL
             ))
-
+            
     def show_listening_map(self):
         Thread(target=self.generate_map).start()
 
@@ -571,57 +629,24 @@ class SpotifyPlayer:
             if not history:
                 return
 
-            # Calculate map center
             latitudes = [p[4] for p in history]
             longitudes = [p[5] for p in history]
-            avg_lat = sum(latitudes) / len(latitudes)
-            avg_lon = sum(longitudes) / len(longitudes)
+            avg_lat = sum(latitudes)/len(latitudes)
+            avg_lon = sum(longitudes)/len(longitudes)
             
             m = folium.Map(location=[avg_lat, avg_lon], zoom_start=10)
             
-            # Group plays by coordinates
-            from collections import defaultdict
-            location_groups = defaultdict(list)
             for play in history:
-                lat = play[4]
-                lon = play[5]
-                location_groups[(lat, lon)].append(play)
-            
-            # Get coordinates of most recent play
-            most_recent_coords = (history[0][4], history[0][5])
-            
-            # Create markers for each location group
-            for coords, plays in location_groups.items():
-                lat, lon = coords
-                color = 'green' if coords == most_recent_coords else 'gray'
-                
-                # Build popup content with all songs at this location
-                popup_html = "<div style='max-height: 200px; overflow-y: auto;'><ul>"
-                for play in plays:
-                    track_name = play[0]
-                    artist = play[1]
-                    album = play[2]
-                    timestamp = datetime.fromisoformat(play[3]).strftime('%Y-%m-%d %H:%M')
-                    popup_html += (
-                        f"<li><b>{track_name}</b> by {artist}<br>"
-                        f"Album: {album}<br>"
-                        f"Played at: {timestamp}</li>"
-                    )
-                popup_html += "</ul></div>"
-                
-                # Create marker with aggregated data
                 folium.Marker(
-                    location=[lat, lon],
-                    popup=folium.Popup(popup_html, max_width=300),
-                    tooltip=f"{len(plays)} plays at this location",
-                    icon=folium.Icon(color=color)
+                    location=[play[4], play[5]],
+                    popup=f"{play[0]} by {play[1]}\nAlbum: {play[2]}",
+                    tooltip=datetime.fromisoformat(play[3]).strftime('%Y-%m-%d %H:%M'),
+                    icon=folium.Icon(color='green' if play == history[0] else 'gray')
                 ).add_to(m)
             
-            # Add heatmap (unchanged)
             from folium.plugins import HeatMap
             HeatMap([[p[4], p[5]] for p in history]).add_to(m)
             
-            # Save and open map
             map_file = 'play_history_map.html'
             m.save(map_file)
             webbrowser.open(f'file://{os.path.abspath(map_file)}')
@@ -630,12 +655,9 @@ class SpotifyPlayer:
             print("Error generating map:", e)
 
     def update_devices(self):
-        try:
-            devices = self.sp.devices()['devices']
-            if devices:
-                self.device_id = devices[0]['id']
-        except Exception as e:
-            print("Error updating devices:", e)
+        if self.device_id is None:
+            messagebox.showinfo("No Device", "Please ensure Spotify is active on a device.")
+        return 
 
 
     def show_roast(self):
