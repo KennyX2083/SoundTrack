@@ -2,7 +2,7 @@ import sqlite3
 import openai
 
 # Explicitly set API key at the module level
-OPENAI_API_KEY = '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'
+OPENAI_API_KEY = 'open-ai-key'
 openai.api_key = OPENAI_API_KEY
 
 if not openai.api_key:
