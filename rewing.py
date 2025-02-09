@@ -14,8 +14,8 @@ from PIL import Image, ImageTk
 import io
 
 # Spotify API Credentials
-SPOTIPY_CLIENT_ID = '6294425ede084c7cb72a5e16a779f1c9'
-SPOTIPY_CLIENT_SECRET = 'b052b89d7d62499284d2b748e0fd0070'
+SPOTIPY_CLIENT_ID = 'client-id'
+SPOTIPY_CLIENT_SECRET = 'client-secret'
 SPOTIPY_REDIRECT_URI = 'http://localhost:8888/callback'
 SCOPE = ('user-read-recently-played user-top-read user-library-read')
 
@@ -24,7 +24,7 @@ GOOGLE_API_KEY = 'AIzaSyAcXfKjFkZaN4p6Fc8iu5kKWBiaJBXUSzE'
 GOOGLE_CX = 'c21816f5610004210'
 
 # OpenAI API Key
-openai.api_key = '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'
+openai.api_key = 'api-key'
 
 class SpotifyRewind:
     def __init__(self, db_name='spotify_plays.db'):
